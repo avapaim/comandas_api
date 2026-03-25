@@ -12,6 +12,7 @@ from domain.schemas.ClienteSchema import (
 
 from infra.orm.ClienteModel import ClienteDB
 from infra.database import get_db
+from infra.dependencies import get_current_active_user
 
 router = APIRouter()
 
@@ -22,7 +23,10 @@ router = APIRouter()
     tags=["Cliente"],
     status_code=status.HTTP_200_OK
 )
-async def get_cliente(db: Session = Depends(get_db)):
+async def get_cliente(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Retorna todos os clientes"""
     try:
         clientes = db.query(ClienteDB).all()
@@ -40,7 +44,11 @@ async def get_cliente(db: Session = Depends(get_db)):
     tags=["Cliente"],
     status_code=status.HTTP_200_OK
 )
-async def get_cliente_id(id: int, db: Session = Depends(get_db)):
+async def get_cliente_id(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Retorna um cliente específico pelo ID"""
     try:
         cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
@@ -68,7 +76,11 @@ async def get_cliente_id(id: int, db: Session = Depends(get_db)):
     status_code=status.HTTP_201_CREATED,
     tags=["Cliente"]
 )
-async def post_cliente(cliente_data: ClienteCreate, db: Session = Depends(get_db)):
+async def post_cliente(
+    cliente_data: ClienteCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Cria um novo cliente"""
     try:
         existing_cliente = db.query(ClienteDB).filter(
@@ -110,7 +122,12 @@ async def post_cliente(cliente_data: ClienteCreate, db: Session = Depends(get_db
     tags=["Cliente"],
     status_code=status.HTTP_200_OK
 )
-async def put_cliente(id: int, cliente_data: ClienteUpdate, db: Session = Depends(get_db)):
+async def put_cliente(
+    id: int,
+    cliente_data: ClienteUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Atualiza um cliente existente"""
     try:
         cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()
@@ -158,7 +175,11 @@ async def put_cliente(id: int, cliente_data: ClienteUpdate, db: Session = Depend
     tags=["Cliente"],
     summary="Remover cliente"
 )
-async def delete_cliente(id: int, db: Session = Depends(get_db)):
+async def delete_cliente(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Remove um cliente"""
     try:
         cliente = db.query(ClienteDB).filter(ClienteDB.id == id).first()

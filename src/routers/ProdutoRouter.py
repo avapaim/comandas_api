@@ -12,6 +12,7 @@ from domain.schemas.ProdutoSchema import (
 
 from infra.orm.ProdutoModel import ProdutoDB
 from infra.database import get_db
+from infra.dependencies import get_current_active_user
 
 router = APIRouter()
 
@@ -22,7 +23,10 @@ router = APIRouter()
     tags=["Produto"],
     status_code=status.HTTP_200_OK
 )
-async def get_produto(db: Session = Depends(get_db)):
+async def get_produto(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Retorna todos os produtos"""
     try:
         produtos = db.query(ProdutoDB).all()
@@ -40,7 +44,11 @@ async def get_produto(db: Session = Depends(get_db)):
     tags=["Produto"],
     status_code=status.HTTP_200_OK
 )
-async def get_produto_id(id: int, db: Session = Depends(get_db)):
+async def get_produto_id(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Retorna um produto específico pelo ID"""
     try:
         produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
@@ -68,7 +76,11 @@ async def get_produto_id(id: int, db: Session = Depends(get_db)):
     status_code=status.HTTP_201_CREATED,
     tags=["Produto"]
 )
-async def post_produto(produto_data: ProdutoCreate, db: Session = Depends(get_db)):
+async def post_produto(
+    produto_data: ProdutoCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Cria um novo produto"""
     try:
         novo_produto = ProdutoDB(
@@ -99,7 +111,12 @@ async def post_produto(produto_data: ProdutoCreate, db: Session = Depends(get_db
     tags=["Produto"],
     status_code=status.HTTP_200_OK
 )
-async def put_produto(id: int, produto_data: ProdutoUpdate, db: Session = Depends(get_db)):
+async def put_produto(
+    id: int,
+    produto_data: ProdutoUpdate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Atualiza um produto existente"""
     try:
         produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
@@ -136,7 +153,11 @@ async def put_produto(id: int, produto_data: ProdutoUpdate, db: Session = Depend
     tags=["Produto"],
     summary="Remover produto"
 )
-async def delete_produto(id: int, db: Session = Depends(get_db)):
+async def delete_produto(
+    id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user)
+):
     """Remove um produto"""
     try:
         produto = db.query(ProdutoDB).filter(ProdutoDB.id == id).first()
