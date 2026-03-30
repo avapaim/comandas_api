@@ -12,9 +12,37 @@ from domain.schemas.ProdutoSchema import (
 
 from infra.orm.ProdutoModel import ProdutoDB
 from infra.database import get_db
-from infra.dependencies import get_current_active_user
+from infra.dependencies import get_current_active_user, require_group
 
 router = APIRouter()
+
+
+@router.get(
+    "/produto/publico/",
+    tags=["Produto"],
+    status_code=status.HTTP_200_OK,
+    summary="Listar produtos publicamente"
+)
+async def get_produto_publico(db: Session = Depends(get_db)):
+    """Lista produtos publicamente, sem id e sem valor"""
+    try:
+        produtos = db.query(ProdutoDB).all()
+
+        resultado = []
+        for produto in produtos:
+            resultado.append({
+                "nome": produto.nome,
+                "descricao": produto.descricao,
+                "foto": str(produto.foto)
+            })
+
+        return resultado
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erro ao buscar produtos públicos: {str(e)}"
+        )
 
 
 @router.get(
@@ -79,7 +107,7 @@ async def get_produto_id(
 async def post_produto(
     produto_data: ProdutoCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user=Depends(require_group([1]))
 ):
     """Cria um novo produto"""
     try:
@@ -115,7 +143,7 @@ async def put_produto(
     id: int,
     produto_data: ProdutoUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user=Depends(require_group([1]))
 ):
     """Atualiza um produto existente"""
     try:
@@ -156,7 +184,7 @@ async def put_produto(
 async def delete_produto(
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user=Depends(require_group([1]))
 ):
     """Remove um produto"""
     try:
