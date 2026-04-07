@@ -1,18 +1,23 @@
 # Arthur Virgilio Alves Paim
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
+import copy
 
 from domain.schemas.ProdutoSchema import (
     ProdutoCreate,
     ProdutoUpdate,
     ProdutoResponse
 )
+from domain.schemas.AuthSchema import FuncionarioAuth
 
 from infra.orm.ProdutoModel import ProdutoDB
 from infra.database import get_db
 from infra.dependencies import get_current_active_user, require_group
+from infra.rate_limit import limiter, get_rate_limit
+from slowapi.errors import RateLimitExceeded
+from services.AuditoriaService import AuditoriaService
 
 router = APIRouter()
 
@@ -23,7 +28,11 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
     summary="Listar produtos publicamente"
 )
-async def get_produto_publico(db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("light"))
+async def get_produto_publico(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """Lista produtos publicamente, sem id e sem valor"""
     try:
         produtos = db.query(ProdutoDB).all()
@@ -38,6 +47,8 @@ async def get_produto_publico(db: Session = Depends(get_db)):
 
         return resultado
 
+    except RateLimitExceeded:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -49,16 +60,22 @@ async def get_produto_publico(db: Session = Depends(get_db)):
     "/produto/",
     response_model=List[ProdutoResponse],
     tags=["Produto"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Listar todos os produtos - protegida por JWT"
 )
+@limiter.limit(get_rate_limit("moderate"))
 async def get_produto(
+    request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(get_current_active_user)
 ):
     """Retorna todos os produtos"""
     try:
         produtos = db.query(ProdutoDB).all()
         return produtos
+
+    except RateLimitExceeded:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -70,12 +87,15 @@ async def get_produto(
     "/produto/{id}",
     response_model=ProdutoResponse,
     tags=["Produto"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Buscar produto por ID - protegida por JWT"
 )
+@limiter.limit(get_rate_limit("moderate"))
 async def get_produto_id(
+    request: Request,
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(get_current_active_user)
 ):
     """Retorna um produto específico pelo ID"""
     try:
@@ -89,6 +109,8 @@ async def get_produto_id(
 
         return produto
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -102,12 +124,15 @@ async def get_produto_id(
     "/produto/",
     response_model=ProdutoResponse,
     status_code=status.HTTP_201_CREATED,
-    tags=["Produto"]
+    tags=["Produto"],
+    summary="Criar novo produto - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("restrictive"))
 async def post_produto(
+    request: Request,
     produto_data: ProdutoCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(require_group([1]))
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Cria um novo produto"""
     try:
@@ -123,8 +148,21 @@ async def post_produto(
         db.commit()
         db.refresh(novo_produto)
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="CREATE",
+            recurso="PRODUTO",
+            recurso_id=novo_produto.id,
+            dados_antigos=None,
+            dados_novos=novo_produto,
+            request=request
+        )
+
         return novo_produto
 
+    except RateLimitExceeded:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -137,13 +175,16 @@ async def post_produto(
     "/produto/{id}",
     response_model=ProdutoResponse,
     tags=["Produto"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Atualizar produto - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("restrictive"))
 async def put_produto(
+    request: Request,
     id: int,
     produto_data: ProdutoUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(require_group([1]))
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Atualiza um produto existente"""
     try:
@@ -155,6 +196,8 @@ async def put_produto(
                 detail="Produto não encontrado"
             )
 
+        dados_antigos = copy.copy(produto)
+
         update_data = produto_data.model_dump(exclude_unset=True)
 
         for field, value in update_data.items():
@@ -163,8 +206,21 @@ async def put_produto(
         db.commit()
         db.refresh(produto)
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="UPDATE",
+            recurso="PRODUTO",
+            recurso_id=produto.id,
+            dados_antigos=dados_antigos,
+            dados_novos=produto,
+            request=request
+        )
+
         return produto
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -179,12 +235,14 @@ async def put_produto(
     "/produto/{id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Produto"],
-    summary="Remover produto"
+    summary="Remover produto - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("critical"))
 async def delete_produto(
+    request: Request,
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(require_group([1]))
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Remove um produto"""
     try:
@@ -196,11 +254,26 @@ async def delete_produto(
                 detail="Produto não encontrado"
             )
 
+        dados_antigos = copy.copy(produto)
+
         db.delete(produto)
         db.commit()
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="DELETE",
+            recurso="PRODUTO",
+            recurso_id=id,
+            dados_antigos=dados_antigos,
+            dados_novos=None,
+            request=request
+        )
+
         return None
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:

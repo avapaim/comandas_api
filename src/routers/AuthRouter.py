@@ -18,6 +18,9 @@ from infra.security import (
     verify_refresh_token
 )
 from infra.dependencies import get_current_active_user
+from infra.rate_limit import limiter, get_rate_limit
+from slowapi.errors import RateLimitExceeded
+from services.AuditoriaService import AuditoriaService
 from settings import ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
 
 router = APIRouter()
@@ -29,7 +32,12 @@ router = APIRouter()
     tags=["Autenticação"],
     summary="Login de funcionário - pública - retorna access e refresh token"
 )
-async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("critical"))
+async def login(
+    request: Request,
+    login_data: LoginRequest,
+    db: Session = Depends(get_db)
+):
     """
     Realiza login do funcionário e retorna access token e refresh token
     """
@@ -70,6 +78,14 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
             }
         )
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=funcionario.id,
+            acao="LOGIN",
+            recurso="AUTH",
+            request=request
+        )
+
         return TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -78,6 +94,8 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
             refresh_expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         )
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -93,7 +111,12 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
     tags=["Autenticação"],
     summary="Refresh token - pública - renova access token"
 )
-async def refresh_token(refresh_data: RefreshTokenRequest, db: Session = Depends(get_db)):
+@limiter.limit(get_rate_limit("critical"))
+async def refresh_token(
+    request: Request,
+    refresh_data: RefreshTokenRequest,
+    db: Session = Depends(get_db)
+):
     """
     Renova o access token usando um refresh token válido
     """
@@ -130,6 +153,14 @@ async def refresh_token(refresh_data: RefreshTokenRequest, db: Session = Depends
             }
         )
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=funcionario.id,
+            acao="REFRESH",
+            recurso="AUTH",
+            request=request
+        )
+
         return TokenResponse(
             access_token=access_token,
             refresh_token=new_refresh_token,
@@ -138,6 +169,8 @@ async def refresh_token(refresh_data: RefreshTokenRequest, db: Session = Depends
             refresh_expires_in=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         )
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -154,7 +187,9 @@ async def refresh_token(refresh_data: RefreshTokenRequest, db: Session = Depends
     tags=["Autenticação"],
     summary="Dados do usuário atual - protegida por autenticação"
 )
+@limiter.limit(get_rate_limit("moderate"))
 async def get_current_user_info(
+    request: Request,
     current_user: FuncionarioAuth = Depends(get_current_active_user)
 ):
     """
@@ -168,8 +203,21 @@ async def get_current_user_info(
     tags=["Autenticação"],
     summary="Logout - pública"
 )
-async def logout():
+@limiter.limit(get_rate_limit("critical"))
+async def logout(
+    request: Request,
+    current_user: FuncionarioAuth = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
     """
     Endpoint para logout
     """
+    AuditoriaService.registrar_acao(
+        db=db,
+        funcionario_id=current_user.id,
+        acao="LOGOUT",
+        recurso="AUTH",
+        request=request
+    )
+
     return {"message": "Logout realizado com sucesso"}

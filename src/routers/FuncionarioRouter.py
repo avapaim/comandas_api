@@ -1,19 +1,24 @@
 # Arthur Virgilio Alves Paim
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
+import copy
 
 from domain.schemas.FuncionarioSchema import (
     FuncionarioCreate,
     FuncionarioUpdate,
     FuncionarioResponse
 )
+from domain.schemas.AuthSchema import FuncionarioAuth
 
 from infra.orm.FuncionarioModel import FuncionarioDB
 from infra.database import get_db
 from infra.security import get_password_hash
-from infra.dependencies import get_current_active_user
+from infra.dependencies import require_group
+from infra.rate_limit import limiter, get_rate_limit
+from slowapi.errors import RateLimitExceeded
+from services.AuditoriaService import AuditoriaService
 
 router = APIRouter()
 
@@ -22,16 +27,22 @@ router = APIRouter()
     "/funcionario/",
     response_model=List[FuncionarioResponse],
     tags=["Funcionário"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Listar todos os funcionários - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("moderate"))
 async def get_funcionario(
+    request: Request,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Retorna todos os funcionários"""
     try:
         funcionarios = db.query(FuncionarioDB).all()
         return funcionarios
+
+    except RateLimitExceeded:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -43,12 +54,15 @@ async def get_funcionario(
     "/funcionario/{id}",
     response_model=FuncionarioResponse,
     tags=["Funcionário"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Buscar funcionário por ID - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("moderate"))
 async def get_funcionario_id(
+    request: Request,
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Retorna um funcionário específico pelo ID"""
     try:
@@ -62,6 +76,8 @@ async def get_funcionario_id(
 
         return funcionario
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -75,15 +91,24 @@ async def get_funcionario_id(
     "/funcionario/",
     response_model=FuncionarioResponse,
     status_code=status.HTTP_201_CREATED,
-    tags=["Funcionário"]
+    tags=["Funcionário"],
+    summary="Criar novo funcionário - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("restrictive"))
 async def post_funcionario(
+    request: Request,
     funcionario_data: FuncionarioCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Cria um novo funcionário"""
     try:
+        if funcionario_data.grupo not in [1, 2, 3]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Grupo inválido. Apenas grupos 1 (Admin), 2 (Atendimento Balcão) ou 3 (Atendimento Caixa) são permitidos."
+            )
+
         existing_funcionario = db.query(FuncionarioDB).filter(
             FuncionarioDB.cpf == funcionario_data.cpf
         ).first()
@@ -110,8 +135,21 @@ async def post_funcionario(
         db.commit()
         db.refresh(novo_funcionario)
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="CREATE",
+            recurso="FUNCIONARIO",
+            recurso_id=novo_funcionario.id,
+            dados_antigos=None,
+            dados_novos=novo_funcionario,
+            request=request
+        )
+
         return novo_funcionario
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -126,13 +164,16 @@ async def post_funcionario(
     "/funcionario/{id}",
     response_model=FuncionarioResponse,
     tags=["Funcionário"],
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
+    summary="Atualizar funcionário - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("restrictive"))
 async def put_funcionario(
+    request: Request,
     id: int,
     funcionario_data: FuncionarioUpdate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Atualiza um funcionário existente"""
     try:
@@ -143,6 +184,8 @@ async def put_funcionario(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Funcionário não encontrado"
             )
+
+        dados_antigos = copy.copy(funcionario)
 
         if funcionario_data.cpf and funcionario_data.cpf != funcionario.cpf:
             existing_funcionario = db.query(FuncionarioDB).filter(
@@ -155,6 +198,12 @@ async def put_funcionario(
                     detail="Já existe um funcionário com este CPF"
                 )
 
+        if funcionario_data.grupo is not None and funcionario_data.grupo not in [1, 2, 3]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Grupo inválido. Apenas grupos 1 (Admin), 2 (Atendimento Balcão) ou 3 (Atendimento Caixa) são permitidos."
+            )
+
         if funcionario_data.senha:
             funcionario_data.senha = get_password_hash(funcionario_data.senha)
 
@@ -166,8 +215,21 @@ async def put_funcionario(
         db.commit()
         db.refresh(funcionario)
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="UPDATE",
+            recurso="FUNCIONARIO",
+            recurso_id=funcionario.id,
+            dados_antigos=dados_antigos,
+            dados_novos=funcionario,
+            request=request
+        )
+
         return funcionario
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
@@ -182,12 +244,14 @@ async def put_funcionario(
     "/funcionario/{id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Funcionário"],
-    summary="Remover funcionário"
+    summary="Remover funcionário - protegida por JWT e grupo 1"
 )
+@limiter.limit(get_rate_limit("critical"))
 async def delete_funcionario(
+    request: Request,
     id: int,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user)
+    current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
     """Remove um funcionário"""
     try:
@@ -199,11 +263,32 @@ async def delete_funcionario(
                 detail="Funcionário não encontrado"
             )
 
+        if current_user.id == id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Não é possível excluir seu próprio usuário"
+            )
+
+        dados_antigos = copy.copy(funcionario)
+
         db.delete(funcionario)
         db.commit()
 
+        AuditoriaService.registrar_acao(
+            db=db,
+            funcionario_id=current_user.id,
+            acao="DELETE",
+            recurso="FUNCIONARIO",
+            recurso_id=id,
+            dados_antigos=dados_antigos,
+            dados_novos=None,
+            request=request
+        )
+
         return None
 
+    except RateLimitExceeded:
+        raise
     except HTTPException:
         raise
     except Exception as e:
