@@ -1,8 +1,8 @@
 # Arthur Virgilio Alves Paim
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import copy
 
 from domain.schemas.ClienteSchema import (
@@ -32,12 +32,32 @@ router = APIRouter()
 @limiter.limit(get_rate_limit("moderate"))
 async def get_cliente(
     request: Request,
+    skip: int = Query(0, ge=0, description="Número de registros para pular"),
+    limit: int = Query(100, ge=1, le=1000, description="Número máximo de registros"),
+    id: Optional[int] = Query(None, description="Filtrar por ID"),
+    nome: Optional[str] = Query(None, description="Filtrar por nome"),
+    cpf: Optional[str] = Query(None, description="Filtrar por CPF"),
+    telefone: Optional[str] = Query(None, description="Filtrar por telefone"),
     db: Session = Depends(get_db),
     current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
-    """Retorna todos os clientes"""
+    """Retorna clientes com filtros e paginação"""
     try:
-        clientes = db.query(ClienteDB).all()
+        query = db.query(ClienteDB)
+
+        if id is not None:
+            query = query.filter(ClienteDB.id == id)
+
+        if nome is not None:
+            query = query.filter(ClienteDB.nome.ilike(f"%{nome}%"))
+
+        if cpf is not None:
+            query = query.filter(ClienteDB.cpf == cpf)
+
+        if telefone is not None:
+            query = query.filter(ClienteDB.telefone.ilike(f"%{telefone}%"))
+
+        clientes = query.offset(skip).limit(limit).all()
         return clientes
 
     except RateLimitExceeded:

@@ -1,8 +1,8 @@
 # Arthur Virgilio Alves Paim
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import copy
 
 from domain.schemas.ProdutoSchema import (
@@ -31,11 +31,39 @@ router = APIRouter()
 @limiter.limit(get_rate_limit("light"))
 async def get_produto_publico(
     request: Request,
+    skip: int = Query(0, ge=0, description="Número de registros para pular"),
+    limit: int = Query(100, ge=1, le=1000, description="Número máximo de registros"),
+    id: Optional[int] = Query(None, description="Filtrar por ID"),
+    nome: Optional[str] = Query(None, description="Filtrar por nome"),
+    descricao: Optional[str] = Query(None, description="Filtrar por descrição"),
+    valor_igual: Optional[float] = Query(None, description="Filtrar por valor exato"),
+    valor_min: Optional[float] = Query(None, description="Filtrar por valor mínimo"),
+    valor_max: Optional[float] = Query(None, description="Filtrar por valor máximo"),
     db: Session = Depends(get_db)
 ):
     """Lista produtos publicamente, sem id e sem valor"""
     try:
-        produtos = db.query(ProdutoDB).all()
+        query = db.query(ProdutoDB)
+
+        if id is not None:
+            query = query.filter(ProdutoDB.id == id)
+
+        if nome is not None:
+            query = query.filter(ProdutoDB.nome.ilike(f"%{nome}%"))
+
+        if descricao is not None:
+            query = query.filter(ProdutoDB.descricao.ilike(f"%{descricao}%"))
+
+        if valor_igual is not None:
+            query = query.filter(ProdutoDB.valor_unitario == valor_igual)
+
+        if valor_min is not None:
+            query = query.filter(ProdutoDB.valor_unitario >= valor_min)
+
+        if valor_max is not None:
+            query = query.filter(ProdutoDB.valor_unitario <= valor_max)
+
+        produtos = query.offset(skip).limit(limit).all()
 
         resultado = []
         for produto in produtos:
@@ -66,12 +94,40 @@ async def get_produto_publico(
 @limiter.limit(get_rate_limit("moderate"))
 async def get_produto(
     request: Request,
+    skip: int = Query(0, ge=0, description="Número de registros para pular"),
+    limit: int = Query(100, ge=1, le=1000, description="Número máximo de registros"),
+    id: Optional[int] = Query(None, description="Filtrar por ID"),
+    nome: Optional[str] = Query(None, description="Filtrar por nome"),
+    descricao: Optional[str] = Query(None, description="Filtrar por descrição"),
+    valor_igual: Optional[float] = Query(None, description="Filtrar por valor exato"),
+    valor_min: Optional[float] = Query(None, description="Filtrar por valor mínimo"),
+    valor_max: Optional[float] = Query(None, description="Filtrar por valor máximo"),
     db: Session = Depends(get_db),
     current_user: FuncionarioAuth = Depends(get_current_active_user)
 ):
-    """Retorna todos os produtos"""
+    """Retorna produtos com filtros e paginação"""
     try:
-        produtos = db.query(ProdutoDB).all()
+        query = db.query(ProdutoDB)
+
+        if id is not None:
+            query = query.filter(ProdutoDB.id == id)
+
+        if nome is not None:
+            query = query.filter(ProdutoDB.nome.ilike(f"%{nome}%"))
+
+        if descricao is not None:
+            query = query.filter(ProdutoDB.descricao.ilike(f"%{descricao}%"))
+
+        if valor_igual is not None:
+            query = query.filter(ProdutoDB.valor_unitario == valor_igual)
+
+        if valor_min is not None:
+            query = query.filter(ProdutoDB.valor_unitario >= valor_min)
+
+        if valor_max is not None:
+            query = query.filter(ProdutoDB.valor_unitario <= valor_max)
+
+        produtos = query.offset(skip).limit(limit).all()
         return produtos
 
     except RateLimitExceeded:

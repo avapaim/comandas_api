@@ -1,40 +1,66 @@
-#Arthur Paim
 from fastapi import FastAPI
-from settings import HOST, PORT, RELOAD
+from fastapi.middleware.cors import CORSMiddleware
+from infra.middleware.IPAccessMiddleware import IPAccessMiddleware
+from settings import HOST, PORT, RELOAD, CORS_ORIGINS
 from infra.rate_limit import limiter, rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import uvicorn
 
+# import das classes com as rotas/endpoints
+from routers import AuditoriaRouter
 from routers import AuthRouter
 from routers import FuncionarioRouter
 from routers import ClienteRouter
 from routers import ProdutoRouter
-from routers import AuditoriaRouter
-from routers import HealthRouter
-# se você já tiver esses routers no projeto:
-# from routers import ComandaRouter
+from routers import ComandaRouter
 # from routers import RecebimentoRouter
+from routers import HealthRouter
 
-
+# lifespan - ciclo de vida da aplicação
 from infra import database
 from contextlib import asynccontextmanager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # executa no startup
     print("API has started")
+
+    # cria, caso não existam, as tabelas de todos os modelos que encontrar na aplicação (importados)
     await database.cria_tabelas()
+
     yield
+
+    # executa no shutdown
     print("API is shutting down")
 
 
+# cria a aplicação FastAPI com o contexto de vida
 app = FastAPI(lifespan=lifespan)
 
+# Middleware opcional para bloquear acessos externos com base nas origens permitidas
+app.add_middleware(IPAccessMiddleware, allowed_origins=CORS_ORIGINS)
+
+# Configuração de CORS - Impede erros quando um Frontend moderno, tipo React/Vue, tenta conectar
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False if "*" in CORS_ORIGINS else True,  # Não permite credenciais (cookies, auth headers) se origem for *
+    allow_methods=["GET", "POST", "PUT", "DELETE"],  # Métodos específicos - * para permitir todos
+    allow_headers=["Content-Type", "Authorization"],  # Headers específicos - * para permitir todos
+    expose_headers=["*"],  # Expõe headers para debug
+    max_age=600,  # Cache de preflight por 10 minutos
+)
+
+# Configuração de Rate Limiting
 app.state.limiter = limiter
+
+# Registrar handler personalizado ANTES de incluir rotas
 app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
-print("Rate Limiting Handler registrado")
+print(" Rate Limiting Handler registrado")
 
 
+# rota padrão
 @app.get("/", tags=["Root"], status_code=200, summary="Informações da API - pública")
 async def root():
     return {
@@ -44,15 +70,16 @@ async def root():
     }
 
 
+# incluir as rotas/endpoints no FastAPI
 app.include_router(AuditoriaRouter.router)
 app.include_router(AuthRouter.router)
 app.include_router(FuncionarioRouter.router)
 app.include_router(ClienteRouter.router)
 app.include_router(ProdutoRouter.router)
-app.include_router(HealthRouter.router)
-# app.include_router(ComandaRouter.router)
+app.include_router(ComandaRouter.router)
 # app.include_router(RecebimentoRouter.router)
-# app.include_router(HealthRouter.router)
+app.include_router(HealthRouter.router)
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host=HOST, port=int(PORT), reload=RELOAD)

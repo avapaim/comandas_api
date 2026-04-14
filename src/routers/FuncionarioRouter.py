@@ -1,8 +1,8 @@
 # Arthur Virgilio Alves Paim
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import copy
 
 from domain.schemas.FuncionarioSchema import (
@@ -33,12 +33,40 @@ router = APIRouter()
 @limiter.limit(get_rate_limit("moderate"))
 async def get_funcionario(
     request: Request,
+    skip: int = Query(0, ge=0, description="Número de registros para pular"),
+    limit: int = Query(100, ge=1, le=1000, description="Número máximo de registros"),
+    id: Optional[int] = Query(None, description="Filtrar por ID"),
+    nome: Optional[str] = Query(None, description="Filtrar por nome"),
+    matricula: Optional[str] = Query(None, description="Filtrar por matrícula"),
+    cpf: Optional[str] = Query(None, description="Filtrar por CPF"),
+    grupo: Optional[int] = Query(None, description="Filtrar por grupo"),
+    telefone: Optional[str] = Query(None, description="Filtrar por telefone"),
     db: Session = Depends(get_db),
     current_user: FuncionarioAuth = Depends(require_group([1]))
 ):
-    """Retorna todos os funcionários"""
+    """Retorna funcionários com filtros e paginação"""
     try:
-        funcionarios = db.query(FuncionarioDB).all()
+        query = db.query(FuncionarioDB)
+
+        if id is not None:
+            query = query.filter(FuncionarioDB.id == id)
+
+        if nome is not None:
+            query = query.filter(FuncionarioDB.nome.ilike(f"%{nome}%"))
+
+        if matricula is not None:
+            query = query.filter(FuncionarioDB.matricula.ilike(f"%{matricula}%"))
+
+        if cpf is not None:
+            query = query.filter(FuncionarioDB.cpf == cpf)
+
+        if grupo is not None:
+            query = query.filter(FuncionarioDB.grupo == grupo)
+
+        if telefone is not None:
+            query = query.filter(FuncionarioDB.telefone.ilike(f"%{telefone}%"))
+
+        funcionarios = query.offset(skip).limit(limit).all()
         return funcionarios
 
     except RateLimitExceeded:
