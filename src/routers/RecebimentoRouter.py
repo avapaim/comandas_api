@@ -11,7 +11,7 @@ from infra.orm.RecebimentoModel import RecebimentoDB, RecebimentoComandaDB
 from domain.schemas.RecebimentoSchema import RecebimentoCreate
 from domain.schemas.AuthSchema import FuncionarioAuth
 
-from infra.dependencies import get_current_active_user, require_group
+from infra.dependencies import require_group
 from infra.rate_limit import limiter
 
 router = APIRouter()
@@ -245,6 +245,32 @@ async def comprovante(
 
     comandas = result_comandas.scalars().all()
 
+    comandas_com_totais = []
+
+    for item in comandas:
+        result_total = await db.execute(
+            select(
+                func.coalesce(
+                    func.sum(
+                        ComandaProdutoDB.quantidade *
+                        ComandaProdutoDB.valor_unitario
+                    ),
+                    0
+                )
+            )
+            .where(ComandaProdutoDB.comanda_id == item.comanda_id)
+        )
+
+        total_comanda = result_total.scalar() or 0
+
+        comandas_com_totais.append(
+            {
+                "id": item.comanda_id,
+                "comanda": item.comanda_id,
+                "total": float(total_comanda),
+            }
+        )
+
     return {
         "id": recebimento.id,
         "recebimento_id": recebimento.id,
@@ -254,12 +280,5 @@ async def comprovante(
         "valor_final": recebimento.total,
         "total_final": recebimento.total,
         "data_hora": recebimento.data_hora,
-        "comandas": [
-            {
-                "id": item.comanda_id,
-                "comanda": item.comanda_id,
-                "total": 0
-            }
-            for item in comandas
-        ],
+        "comandas": comandas_com_totais,
     }
